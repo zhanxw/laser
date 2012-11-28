@@ -30,12 +30,12 @@ void normalizeMatrix(Mat* m) {
   int row = geno.rows();
   int col = geno.cols();
   RowVec count(col);
-  count.setZero(col);
+  count.setZero();
   RowVec sum(col);
-  sum.setZero(col);
+  sum.setZero();
   RowVec sum2(col);
-  sum.setZero(col);
-
+  sum2.setZero();
+  
   // std::cerr << sum.head(10) << "\n";
   for (int i = 0; i < row; ++i){
     for (int j = 0; j < col; ++j){
@@ -47,16 +47,12 @@ void normalizeMatrix(Mat* m) {
     }
   }
 
-  // std::cerr << sum.head(10) << "\n";
-  RowVec avg = sum.array() / count.array();
+  RowVec avg = sum.array() ;
   RowVec sd = ((sum2.array() - sum.array()*sum.array()/count.array()) / (count.array() - 1)).sqrt();
-
-  // std::cerr<< avg.head(10) << "\n";
-  // std::cerr<< sd.head(10) << "\n";
-
+  
   for (int j = 0; j < col; ++j){
     for (int i = 0; i < row; ++i){
-      if (sd(j) < 1e-6) { // monomorphic
+      if (sd(j) < 1e-6 || count(j) < 1e-6) { // monomorphic
         geno.col(j).setZero();
         continue;
       }
@@ -241,6 +237,7 @@ void output(FileWriter& fout, const std::string& fam, std::string& pid, int cove
   fout.printf("%s\t%s\t", fam.c_str(), pid.c_str());
   fout.printf("%d\t", coveredSite);
   fout.printf("%g\t", meanCov);
+  fout.printf("%g\t", t);
   fout.printf("%s\n", toString(row).c_str());
 };
 
@@ -258,8 +255,8 @@ int main(int argc, char** argv){
       ADD_STRING_PARAMETER(pl, refGenoFile, "--refGeno", "specify reference genotype file")
       ADD_STRING_PARAMETER(pl, seqFile, "--seqFile", "specify .seq file generated from pile-ups")
       ADD_STRING_PARAMETER(pl, outPrefix, "--out", "output prefix")
-      ADD_INT_PARAMETER_WITH_DEFAULT(pl, PC, 4, "--pc", "number of PC to use (integer: >=1, default 4)")
-      ADD_DOUBLE_PARAMETER_WITH_DEFAULT(pl, errorRate, 0.01, "--errorRate", "error rate (double: [0.0, 0.5), default: 0.01 )")
+      ADD_INT_PARAMETER(pl, PC, "--pc", "number of PC to use (integer: >=1, default 4)")
+      ADD_DOUBLE_PARAMETER(pl, errorRate, "--errorRate", "error rate (double: [0.0, 0.5), default: 0.01 )")
       ADD_PARAMETER_GROUP(pl, "Auxilliary Functions")
       ADD_BOOL_PARAMETER(pl, debug, "--debug", "specify whether to output intermediate files")
       ADD_BOOL_PARAMETER(pl, help, "--help", "Print detailed help message")
@@ -281,9 +278,10 @@ int main(int argc, char** argv){
     abort();
   }
 
-  REQUIRE_STRING_PARAMETER(FLAG_refCoordFile, "Please provide input file using: --refCoord");
-  REQUIRE_STRING_PARAMETER(FLAG_refGenoFile, "Please provide input file using: --refGeno");
-  REQUIRE_STRING_PARAMETER(FLAG_seqFile, "Please provide input file using: --seqFile");
+  // set up logger
+  if (FLAG_outPrefix.empty()) {
+    FLAG_outPrefix = "laser";
+  }
   Logger _logger( (FLAG_outPrefix + ".log").c_str());
   logger = &_logger;
   logger->infoToFile("Program Version");
@@ -294,6 +292,20 @@ int main(int argc, char** argv){
 
   time_t startTime = time(0);
   logger->info("Analysis started at: %s", currentTime().c_str());
+
+  // check parameters
+  REQUIRE_STRING_PARAMETER(FLAG_refCoordFile, "Please provide input file using: --refCoord");
+  REQUIRE_STRING_PARAMETER(FLAG_refGenoFile, "Please provide input file using: --refGeno");
+  REQUIRE_STRING_PARAMETER(FLAG_seqFile, "Please provide input file using: --seqFile");
+  
+  if (FLAG_PC <= 0 || FLAG_PC > 20) {
+    logger->error("Number of PC specified is out of range: %d ", FLAG_PC);
+    exit(1);
+  }
+  if (FLAG_errorRate <= 0.0 || FLAG_errorRate > 0.5) {
+    logger->error("The error rate specified is out of range: %d ", FLAG_errorRate);
+    exit(1);
+  }
 
   // load reference coord
   Mat refCoord;
@@ -329,8 +341,6 @@ int main(int argc, char** argv){
   //   ofs2.close();
   //   logger->info("Finished PCA on original reference");
   // }
-  // const int FLAG_PC = 4;
-  // const double FLAG_errorRate = 0.01;
 
   FileWriter fout( (FLAG_outPrefix + ".out").c_str());
   outputHeader(fout, FLAG_PC);
@@ -401,9 +411,8 @@ int main(int argc, char** argv){
 
     ret = pca.compute(resampleGeno * resampleGeno.transpose());
     if (ret) {
-      logger->error("PCA decomposition failed, and we saved the results.");
+      logger->error("PCA decomposition failed.");
       output(fout, fd[0], fd[1], nonEmptySite, meanCov, similarityScore, resampledNewInOrig);
-      continue;
 
       if (FLAG_debug) {
         Mat M = resampleGeno * resampleGeno.transpose();
@@ -415,8 +424,10 @@ int main(int argc, char** argv){
         ofs << resampleGeno;
         ofs.close();
       }
+      continue;
     }
-    logger->info("Top PC eigenvalues: %s", toString(pca.getD()).c_str());
+    RowVec topEigenValue = pca.getD().head(FLAG_PC);
+    logger->info("Top PC eigenvalues: %s", toString(topEigenValue).c_str());
 
     // procurstes
     Mat resampledRef = pca.getV().topLeftCorner(refGeno.rows(), FLAG_PC);
@@ -427,7 +438,6 @@ int main(int argc, char** argv){
     if (ret) {
       logger->error("Procrustes analysis failed, and we saved the results.");
       output(fout, fd[0], fd[1], nonEmptySite, meanCov, similarityScore, resampledNewInOrig);
-      continue;
 
       if (FLAG_debug) {
         std::ofstream ofs( (FLAG_outPrefix + "." + fd[0] + ".resampleCoord").c_str() );
@@ -437,6 +447,7 @@ int main(int argc, char** argv){
         ofs << refCoord;
         ofs.close();
       }
+      continue;
     }
     similarityScore = procrustes.getT();
     
