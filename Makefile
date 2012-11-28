@@ -81,8 +81,8 @@ $(GONCALO_LIB_DBG):
 ##################################################
 
 INCLUDE = . $(THIRD_INC) $(BASE_INC)
-LIB = $(THIRD_LIB) $(BASE_LIB)
-LIB_DBG = $(THIRD_LIB) $(BASE_LIB_DBG)
+LIB = $(BASE_LIB) $(THIRD_LIB)
+LIB_DBG = $(BASE_LIB_DBG) $(THIRD_LIB)
 CXX_INCLUDE = $(addprefix -I, $(INCLUDE))
 CXX_LIB = $(LIB) -lz -lbz2 -lm -lblas
 CXX_LIB_DBG = $(LIB_DBG) -lz -lbz2 -lm -lblas
@@ -98,7 +98,7 @@ reverse = $(if $(1),$(call reverse,$(wordlist 2,$(words $(1)),$(1)))) $(firstwor
 lib: $(call reverse,$(LIB))
 lib-dbg: $(call reverse,$(LIB_DBG))
 
-release: CXX_FLAGS = -O2 -DNDEBUG $(DEFAULT_CXXFLAGS) $(CXX_PLATFORM)
+release: CXX_FLAGS = -fopenmp -O2 -DNDEBUG $(DEFAULT_CXXFLAGS) $(CXX_PLATFORM)
 release: $(DIR_EXEC)/$(EXEC) util
 $(DIR_EXEC)/$(EXEC): lib \
                      Main.o \
