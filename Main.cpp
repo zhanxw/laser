@@ -258,6 +258,8 @@ int main(int argc, char** argv){
       ADD_STRING_PARAMETER(pl, refGenoFile, "--refGeno", "specify reference genotype file")
       ADD_STRING_PARAMETER(pl, seqFile, "--seqFile", "specify .seq file generated from pile-ups")
       ADD_STRING_PARAMETER(pl, outPrefix, "--out", "output prefix")
+      ADD_INT_PARAMETER_WITH_DEFAULT(pl, PC, 4, "--pc", "number of PC to use (integer: >=1, default 4)")
+      ADD_DOUBLE_PARAMETER_WITH_DEFAULT(pl, errorRate, 0.01, "--errorRate", "error rate (double: [0.0, 0.5), default: 0.01 )")
       ADD_PARAMETER_GROUP(pl, "Auxilliary Functions")
       ADD_BOOL_PARAMETER(pl, debug, "--debug", "specify whether to output intermediate files")
       ADD_BOOL_PARAMETER(pl, help, "--help", "Print detailed help message")
@@ -327,8 +329,8 @@ int main(int argc, char** argv){
   //   ofs2.close();
   //   logger->info("Finished PCA on original reference");
   // }
-  const int FLAG_PC = 4;
-  const double FLAG_errorRate = 0.01;
+  // const int FLAG_PC = 4;
+  // const double FLAG_errorRate = 0.01;
 
   FileWriter fout( (FLAG_outPrefix + ".out").c_str());
   outputHeader(fout, FLAG_PC);
