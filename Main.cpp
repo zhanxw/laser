@@ -6,10 +6,6 @@
 #include <iostream>
 #include <fstream>
 
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
-
-
 #include "base/Argument.h"
 #include "base/IO.h"
 #include "base/Logger.h"
@@ -19,15 +15,10 @@
 #include "GitVersion.h"
 #include "Common.h"
 #include "PCA.h"
+#include "Procrustes.h"
+#include "Binomial.h"
 
 Logger* logger = NULL;
-
-// void centeringMatrix(Mat* m) {
-//   Mat& r = *m;
-//   RowVec center = r.colwise().sum();
-//   center /= r.rows();
-//   r.rowwise() -= center;
-// };
 
 /**
  * Normalize matrix by column
@@ -44,7 +35,7 @@ void normalizeMatrix(Mat* m) {
   sum.setZero(col);
   RowVec sum2(col);
   sum.setZero(col);
-  
+
   // std::cerr << sum.head(10) << "\n";
   for (int i = 0; i < row; ++i){
     for (int j = 0; j < col; ++j){
@@ -62,7 +53,7 @@ void normalizeMatrix(Mat* m) {
 
   // std::cerr<< avg.head(10) << "\n";
   // std::cerr<< sd.head(10) << "\n";
-  
+
   for (int j = 0; j < col; ++j){
     for (int i = 0; i < row; ++i){
       if (sd(j) < 1e-6) { // monomorphic
@@ -70,152 +61,13 @@ void normalizeMatrix(Mat* m) {
         continue;
       }
       if ( geno(i,j) >= 0) { //missing
-          geno(i,j) = ( geno(i,j) - avg(j)  ) /sd(j);
+        geno(i,j) = ( geno(i,j) - avg(j)  ) /sd(j);
       } else {
         geno(i,j) = 0.0;
       }
     }
   }
 }
-
-class Procrustes{
- public:
-  /**
-   * Find a mapping f, such that minimize the distance of \sum_i (f(x)_i  - y_i)^2
-   * NOTE: @param x and @param y needs normalized
-   * @return 0 if success
-   */
-  int compute(const Mat& x, const Mat& y) {
-    // check dimension and centered
-    if (x.cols() != y.cols() ||
-        x.rows() != y.rows()) {
-      logger->error("Dimension in Procrustes analysis mismatches");
-      return -1;
-    }
-    bool centered;
-    xMean = x.colwise().sum().array().abs();
-    xMean /= x.rows();
-    centered =  (xMean.array() < 1e-6).all();
-    if (! centered ) {
-      logger->info("Matrix X is not centered");
-      xCenter = x;
-      xCenter.rowwise() -= xMean;
-    } else {
-      xCenter = x;
-    }
-    logger->info("Done centering matrix X");
-      
-    yMean = y.colwise().sum().array().abs();
-    yMean /= y.rows();
-    centered = (yMean.array() < 1e-6).all();
-    if (! centered ) {
-      logger->info("Matrix Y is not centered");
-      yCenter = y;
-      yCenter.rowwise() -= yMean;
-    } else {
-      yCenter = y;
-    }
-    logger->info("Done centering Matrix Y");
-    
-    C = yCenter.transpose() * xCenter;
-    svd.compute(C, Eigen::ComputeThinU | Eigen::ComputeThinV);
-    // C = U * S * V^t
-    U = svd.matrixU();
-    S = svd.singularValues();
-    V = svd.matrixV();
-
-    traceOfXtX = (xCenter.transpose() * xCenter).trace();
-    traceOfS = S.sum();
-    traceOfYtY = (yCenter.transpose() * yCenter).trace();
-
-    A = V * (U.transpose());
-    rho =  traceOfS / traceOfXtX;
-    b = yMean - rho * A.transpose() * xMean;
-
-    d = traceOfYtY - traceOfS * traceOfS / traceOfXtX;
-    D = 1 - traceOfS * traceOfS / traceOfXtX / traceOfYtY;
-    t = sqrt(1-D);
-    return 0;
-  }
-  /**
-   * apply f(x) to @param x.
-   */
-  void transform(const Mat& x, Mat* y) {
-    if (x.rows() == 1) {
-      (*y) = (rho * A.transpose() * x.transpose()).transpose() + b;
-    } else if (x.cols() == 1) {
-      (*y) = rho * A.transpose() * x + b.transpose();
-    }
-  }
-  // U * S * V_t = original matrix
-  const Mat& getU() const {
-    return U;
-  }
-  const Vec& getS() const {
-    return S; //svd.singularValues();
-  }
-  const Mat& getV() const {
-    return V; //svd.matrixV();
-  }
-  const Mat& getA() const {
-    return A; 
-  }
-  const RowVec& getB() const{
-    return b;
-  }
-  double getD() const {
-    return D;
-  };
-  double getRho() const {
-    return rho;
-  };
-  double getT() const {
-    return t;
-  }
- private:
-  Mat C;
-  Mat A;
-  double rho;
-  double d;
-  double D;
-  double traceOfS;
-  double traceOfXtX;
-  double traceOfYtY;
-  Eigen::JacobiSVD<Mat> svd;
-  Mat U;
-  Mat V;
-  Vec S;
-  double t;
-  RowVec xMean;
-  RowVec yMean;
-  RowVec b;
-  Mat xCenter; // centered matrix of X
-  Mat yCenter; // centered matrix of Y
-};
-
-class Binomial{
- public:
-  Binomial() {
-    gsl_rng_env_setup();
-
-    T = gsl_rng_default;
-    r = gsl_rng_alloc (T);
-  };
-  ~Binomial() {
-    gsl_rng_free (r);
-  }
-  int rbinom(int n, double p) const {
-    if (p < 0.0 || p > 1.0) {
-      fprintf(stderr, "Wrong p");
-      exit(1);
-    }
-    // gsl_ran_binomial (const gsl_rng * r, double p, unsigned int n)
-    return (int) (gsl_ran_binomial(r, p, n));
-  }
- private:
-  const gsl_rng_type * T;
-  gsl_rng * r;
-};
 
 int resampleGenotype(const int geno, const int coverage, const double errorRate, const Binomial& b) {
   if (coverage <= 0) {
@@ -236,7 +88,7 @@ int resampleGenotype(const int geno, const int coverage, const double errorRate,
       exit(1);
   }
   fprintf(stderr, "Should not reach here!");
-  return -1;  
+  return -1;
 }
 
 int resampleGenotype(const Mat& refGeno, const Vec& depth, const Vec& refCount, const double errorRate, const Binomial& b, Mat *resampleGeno){
@@ -247,7 +99,7 @@ int resampleGenotype(const Mat& refGeno, const Vec& depth, const Vec& refCount, 
   }
 
   int nonEmptySite = 0;
-  int d; 
+  int d;
   for (int i = 0; i < depth.size(); ++i ) {
     d = (int) depth(i);
     if ( d > 0) {
@@ -261,7 +113,7 @@ int resampleGenotype(const Mat& refGeno, const Vec& depth, const Vec& refCount, 
   // Mat count;
   // count.resize(3,11);
   // count.setZero();
-  
+
   Mat& m = *resampleGeno;
   m.resize(refGeno.rows() + 1, nonEmptySite);
 
@@ -277,9 +129,9 @@ int resampleGenotype(const Mat& refGeno, const Vec& depth, const Vec& refCount, 
       if (g >= 0) {
         rg = (int) resampleGenotype( g, d, errorRate, b);
         m(s, idx) = rg;
-        // if (d > 10) 
+        // if (d > 10)
         //   count(g, int(10.0 * rg / depth(i))) ++;
-        // fprintf(stderr, "%d\t%d\n" 
+        // fprintf(stderr, "%d\t%d\n"
       } else {
         m(s, idx) = -9; // missing will be kept at -9
       }
@@ -373,6 +225,25 @@ void dumpMatrix(const char* fn, const Mat& X) {
   fout.close();
 }
 
+
+void outputHeader(FileWriter& fout, int numPC) {
+  fout.printf("info_1\tinfo_2\tL\taveC\tt");
+  for (int i = 0; i < numPC; ++i) {
+    fout.printf("\tPC%d", i + 1);
+  }
+  fout.write("\n");
+};
+
+/**
+ * @param t: procrustes similarity score
+ */
+void output(FileWriter& fout, const std::string& fam, std::string& pid, int coveredSite, double meanCov, double t, Mat& row) {
+  fout.printf("%s\t%s\t", fam.c_str(), pid.c_str());
+  fout.printf("%d\t", coveredSite);
+  fout.printf("%g\t", meanCov);
+  fout.printf("%s\n", toString(row).c_str());
+};
+
 int main(int argc, char** argv){
 #if 0
   Binomial b;
@@ -386,9 +257,9 @@ int main(int argc, char** argv){
       ADD_STRING_PARAMETER(pl, refCoordFile, "--refCoord", "specify reference coordinates")
       ADD_STRING_PARAMETER(pl, refGenoFile, "--refGeno", "specify reference genotype file")
       ADD_STRING_PARAMETER(pl, seqFile, "--seqFile", "specify .seq file generated from pile-ups")
-      ADD_BOOL_PARAMETER(pl, debug, "--debug", "specify whether to output intermediate files")
       ADD_STRING_PARAMETER(pl, outPrefix, "--out", "output prefix")
       ADD_PARAMETER_GROUP(pl, "Auxilliary Functions")
+      ADD_BOOL_PARAMETER(pl, debug, "--debug", "specify whether to output intermediate files")
       ADD_BOOL_PARAMETER(pl, help, "--help", "Print detailed help message")
       END_PARAMETER_LIST(pl)
       ;
@@ -439,10 +310,11 @@ int main(int argc, char** argv){
 
   if (refCoord.rows() != refGeno.rows()){
     logger->error("Ref coord and ref geno does not match");
+    exit(1);
   }
 
   // if (false){
-  //   logger->info("Begin PCA on original reference");    
+  //   logger->info("Begin PCA on original reference");
   //   PCA pca;
   //   Mat r = refGeno;
   //   normalizeMatrix(&r);
@@ -455,20 +327,27 @@ int main(int argc, char** argv){
   //   ofs2.close();
   //   logger->info("Finished PCA on original reference");
   // }
+  const int FLAG_PC = 4;
+  const double FLAG_errorRate = 0.01;
 
   FileWriter fout( (FLAG_outPrefix + ".out").c_str());
-  
+  outputHeader(fout, FLAG_PC);
+
   // for each sample
   Binomial binomial;
   Mat resampleGeno;
-  Mat resampleCoord;
   Vec depth;
   Vec refCount;
   PCA pca;
   Procrustes procrustes;
 
-  const int FLAG_PC = 4;
-  const double FLAG_errorRate = 0.01;
+  int nonEmptySite = 0;
+  double meanCov = 0;
+  double similarityScore = 0;
+  Mat resampledNewInOrig;
+  resampledNewInOrig.resize(1, FLAG_PC);
+
+
 
   int ret = 0;
   std::string line;
@@ -477,6 +356,12 @@ int main(int argc, char** argv){
   LineReader lr (FLAG_seqFile);
   while (lr.readLine(&line)){
     lineNo ++;
+    // clean output variable
+    nonEmptySite = 0;
+    meanCov = 0;
+    similarityScore = 0;
+    resampledNewInOrig.setZero();
+
     //check line range
     // XXXX
 
@@ -484,7 +369,7 @@ int main(int argc, char** argv){
     stringTokenize(line, "\t ", &fd);
     // check dimension
     if ((int)fd.size() != refGeno.cols() * 2 + 6) { // 6 is the first 6 columns
-      logger->error("Dimension does not match at line: %d\n", lineNo);
+      logger->error("Skip: Dimension does not match at line: %d\n", lineNo);
       continue;
     }
 
@@ -497,95 +382,67 @@ int main(int argc, char** argv){
     }
     if (resampleGenotype(refGeno, depth, refCount, FLAG_errorRate, binomial, &resampleGeno)) {
       logger->error("Resample step failed!");
-      break;
+      output(fout, fd[0], fd[1], nonEmptySite, meanCov, similarityScore, resampledNewInOrig);
+      continue;
     } else {
       logger->info("Resampled genotype is [ %d x %d ]", resampleGeno.rows(), resampleGeno.cols());
     }
-    // dumpMatrix("mat.resample", resampleGeno);
-    // std::cout << resampleGeno.topLeftCorner(10, 10) << "\n";
-
+    nonEmptySite = resampleGeno.cols();
+    meanCov = resampleGeno.bottomRows(1).sum() / nonEmptySite;
+    
     // normalize geno and remove monomorphic
     logger->info("Center and scale matrix [ %d by %d ]", (resampleGeno).rows(), (resampleGeno).cols());
     normalizeMatrix(&resampleGeno);
 
     // pca resample
-    logger->info("Perform PCA decomposition");    
-    Mat M = resampleGeno * resampleGeno.transpose();
-    if (FLAG_debug) {
-      std::ofstream ofs( (FLAG_outPrefix+".M").c_str() );
-      ofs << M;
-      ofs.close();
-    };
-    ret = pca.compute(M);
-    if (ret || FLAG_debug) {
-      std::ofstream ofs( (FLAG_outPrefix+".pca").c_str() );
-      ofs << resampleGeno;
-      ofs.close();
-    }
+    logger->info("Perform PCA decomposition");
 
-    // const Mat& tmp = pca.getV();
-    // dumpMatrix("mat.simuPC", pca.getV());
-    
+    ret = pca.compute(resampleGeno * resampleGeno.transpose());
     if (ret) {
       logger->error("PCA decomposition failed, and we saved the results.");
+      output(fout, fd[0], fd[1], nonEmptySite, meanCov, similarityScore, resampledNewInOrig);
+      continue;
+
+      if (FLAG_debug) {
+        Mat M = resampleGeno * resampleGeno.transpose();
+        std::ofstream ofs( (FLAG_outPrefix + "." + fd[0] + ".M").c_str() );
+        ofs << M;
+        ofs.close();
+
+        ofs.open( (FLAG_outPrefix + "." + fd[0] + ".resampledGeno").c_str() );
+        ofs << resampleGeno;
+        ofs.close();
+      }
     }
-    logger->info("Top PC eigenvalues: %lf, %lf, %lf, %lf", pca.getD()(0), pca.getD()(1), pca.getD()(2), pca.getD()(3));
+    logger->info("Top PC eigenvalues: %s", toString(pca.getD()).c_str());
 
     // procurstes
     Mat resampledRef = pca.getV().topLeftCorner(refGeno.rows(), FLAG_PC);
     Mat resampledNew = pca.getV().bottomLeftCorner(1, FLAG_PC);
-    logger->info("Resampled coord before Procrustes: %lf, %lf, %lf, %lf", resampledNew(0, 0), resampledNew(0, 1), resampledNew(0, 2), resampledNew(0, 3));
-    std::cout << resampledNew << "\n";
-    
-    
-    Mat resampledNewInOrig;
+    logger->info("Resampled coord before Procrustes: %s", toString(resampledNew).c_str());
+
     ret = procrustes.compute(resampledRef, refCoord);
-    if (ret || FLAG_debug) {
-      std::ofstream ofs1( (FLAG_outPrefix+".resampleCoord").c_str() );
-      ofs1 << pca.getV().leftCols(FLAG_PC);
-      ofs1.close();
-      std::ofstream ofs2( (FLAG_outPrefix+".origCoord").c_str() );
-      ofs2 << refCoord;
-      ofs2.close();
-    }
     if (ret) {
       logger->error("Procrustes analysis failed, and we saved the results.");
+      output(fout, fd[0], fd[1], nonEmptySite, meanCov, similarityScore, resampledNewInOrig);
+      continue;
+
+      if (FLAG_debug) {
+        std::ofstream ofs( (FLAG_outPrefix + "." + fd[0] + ".resampleCoord").c_str() );
+        ofs << pca.getV().leftCols(FLAG_PC);
+        ofs.close();
+        ofs.open( (FLAG_outPrefix + "." + fd[0] + ".origCoord").c_str() );
+        ofs << refCoord;
+        ofs.close();
+      }
     }
-    // else {
-    //   std::cout << "Procrustes results:" << "\n";
-    //   std::cout << "A = " << "\n";
-    //   std::cout << procrustes.getA();
-    //   std::cout << "\n";
-    //   std::cout << "b = " << "\n";
-    //   std::cout << procrustes.getB();
-    //   std::cout << "\n";
-    //   std::cout << "rho = " << "\n";
-    //   std::cout << procrustes.getRho();
-    //   std::cout << "\n";
-    // }      
-    // // std::cout << pca.getV();
+    similarityScore = procrustes.getT();
+    
     procrustes.transform(resampledNew, &resampledNewInOrig);
-    logger->info("Resampled coord after procrustes: %lf, %lf, %lf, %lf", resampledNewInOrig(0, 0), resampledNewInOrig(0, 1), resampledNewInOrig(0, 2), resampledNewInOrig(0, 3));
-    std::cout << resampledNewInOrig << "\n";
+    logger->info("Resampled coord after procrustes: %s", toString(resampledNewInOrig).c_str());
 
     //output
-    for (int i = 0; i < 6; ++i) {
-      fprintf(stdout, "%s\t", fd[i].c_str());
-    }
-    fprintf(stdout, "%lf\t%lf", procrustes.getD(), procrustes.getT());
-    for (int i = 0; i < FLAG_PC; ++i) {
-      fprintf(stdout, "\t%lf", resampledNewInOrig(0, i));
-    }
-    fputc('\n', stdout);
-
-    fout.printf("%s\t%s\t", fd[0].c_str(), fd[1].c_str());
-    fout.printf("%lf\t%lf", procrustes.getD(), procrustes.getT());
-    for (int i = 0; i < FLAG_PC; ++i) {
-      fout.printf("\t%lf", resampledNewInOrig(0, i));
-    }
-    
-    // XXX
-    // also need to aware of debugging intermediate file
+    output(fout, fd[0], fd[1], nonEmptySite, meanCov, similarityScore, resampledNewInOrig);
   };
 
   time_t endTime = time(0);
@@ -595,7 +452,7 @@ int main(int argc, char** argv){
 
   fout.close();
 #endif
-  
+
   return 0;
 }
 
