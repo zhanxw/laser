@@ -14,6 +14,7 @@
 
 #include "GitVersion.h"
 #include "Common.h"
+#include "ReadData.h"
 #include "PCA.h"
 #include "Procrustes.h"
 #include "Binomial.h"
@@ -152,52 +153,6 @@ std::string currentTime() {
   return s;
 };
 
-int readIntoMatrix(const std::string& fn, int firstNumRowToSkip, int firstNumColToSkip, Mat* out) {
-  Mat& m = *out;
-  double d;
-
-  std::vector<double> geno;
-  std::string line;
-  std::vector<std::string> fd;
-  int lastCol = -1;
-  int lineNo = 0;
-  LineReader lr (fn);
-  while (lr.readLine(&line)){
-    lineNo ++;
-    if (lineNo <= firstNumRowToSkip) {
-      continue;
-    }
-    stringNaturalTokenize(line, "\t ", &fd);
-    if (lastCol < 0 )
-      lastCol = fd.size();
-    if ((int)fd.size() != lastCol) {
-      logger->error("File [ %s ] line [ %d ] has problem", fn.c_str(), lineNo);
-      return -1;
-    }
-
-    for (size_t i = firstNumColToSkip; i < fd.size(); ++i ){
-      if (!str2double(fd[i],&d)) {
-        logger->error("Wrong genotype [ %s ] in line [ %d ] and column [ %zu ]\n", fd[i].c_str(), lineNo, i);
-        geno.push_back(0.0);
-      } else {
-        geno.push_back(d);
-      }
-    }
-  }
-  int ncol = lastCol - firstNumColToSkip; // skiping first two column
-  int nrow = geno.size() / ncol;
-  if ((int)geno.size() != ncol * nrow) {
-    logger->error("Dimension does not match when reading file [ %s ]", fn.c_str());
-    return -1;
-  }
-  m.resize(nrow, ncol);
-  for (int i = 0; i < nrow; ++i){
-    for (int j = 0; j < ncol; ++j) {
-      m(i, j) = geno[i * ncol + j];
-    }
-  }
-  return 0;
-} // end int readIntoMatrix(const std::string& fn, int firstNumRowToSkip, int firstNumColToSkip, Mat* out) {
 
 int readRefCoord(const std::string& fn, Mat* out) {
   // line 1 is just like this:
@@ -285,7 +240,7 @@ int main(int argc, char** argv){
   Logger _logger( (FLAG_outPrefix + ".log").c_str());
   logger = &_logger;
   logger->infoToFile("Program Version");
-  logger->infoToFile(gitVersion);
+  logger->infoToFile("%s", gitVersion);
   logger->infoToFile("Parameters BEGIN");
   pl.WriteToFile(logger->getHandle());
   logger->infoToFile("Parameters END");
@@ -303,7 +258,7 @@ int main(int argc, char** argv){
     exit(1);
   }
   if (FLAG_errorRate <= 0.0 || FLAG_errorRate > 0.5) {
-    logger->error("The error rate specified is out of range: %d ", FLAG_errorRate);
+    logger->error("The error rate specified is out of range: %g ", FLAG_errorRate);
     exit(1);
   }
 
@@ -312,14 +267,15 @@ int main(int argc, char** argv){
   if (readRefCoord(FLAG_refCoordFile, & refCoord)) {
     logger->error("Cannot read ref cood file");
   }else{
-    logger->info("Finish read ref cood file including [ %d ] samples and [ %d ] column", refCoord.rows(), refCoord.cols());
+    logger->info("Finish read ref cood file including [ %d ] samples and [ %d ] column", (int)refCoord.rows(), (int)refCoord.cols());
   }
   // load reference geno
   Mat refGeno;
   if (readRefGeno(FLAG_refGenoFile, & refGeno)) {
     logger->error("Cannot read ref geno file");
   } else {
-    logger->info("Finish read ref geno file including [ %d ] samples and [ %d ] column ( [ %d ] genotypes )", refGeno.rows(), refGeno.cols(), (refGeno.cols() - 6)/2);
+    logger->info("Finish read ref geno file including [ %d ] samples and [ %d ] column ( [ %d ] genotypes )",
+                 (int)refGeno.rows(), (int)refGeno.cols(), (int)(refGeno.cols() - 6)/2);
   };
 
   if (refCoord.rows() != refGeno.rows()){
@@ -397,13 +353,13 @@ int main(int argc, char** argv){
       output(fout, fd[0], fd[1], nonEmptySite, meanCov, similarityScore, resampledNewInOrig);
       continue;
     } else {
-      logger->info("Resampled genotype is [ %d x %d ]", resampleGeno.rows(), resampleGeno.cols());
+      logger->info("Resampled genotype is [ %d x %d ]", (int)resampleGeno.rows(), (int)resampleGeno.cols());
     }
     nonEmptySite = resampleGeno.cols();
     meanCov = resampleGeno.bottomRows(1).sum() / nonEmptySite;
     
     // normalize geno and remove monomorphic
-    logger->info("Center and scale matrix [ %d by %d ]", (resampleGeno).rows(), (resampleGeno).cols());
+    logger->info("Center and scale matrix [ %d by %d ]", (int)(resampleGeno).rows(), (int)(resampleGeno).cols());
     normalizeMatrix(&resampleGeno);
 
     // pca resample

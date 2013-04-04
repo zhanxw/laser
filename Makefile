@@ -84,8 +84,8 @@ INCLUDE = . $(THIRD_INC) $(BASE_INC)
 LIB = $(BASE_LIB) $(THIRD_LIB)
 LIB_DBG = $(BASE_LIB_DBG) $(THIRD_LIB)
 CXX_INCLUDE = $(addprefix -I, $(INCLUDE))
-CXX_LIB = $(LIB) -lz -lbz2 -lm -lblas
-CXX_LIB_DBG = $(LIB_DBG) -lz -lbz2 -lm -lblas
+CXX_LIB = $(LIB) -lz -lbz2 -lm
+CXX_LIB_DBG = $(LIB_DBG) -lz -lbz2 -lm
 
 
 DEFAULT_CXXFLAGS = -D__STDC_LIMIT_MACROS
@@ -102,15 +102,17 @@ release: CXX_FLAGS = -fopenmp -O2 -DNDEBUG $(DEFAULT_CXXFLAGS) $(CXX_PLATFORM)
 release: $(DIR_EXEC)/$(EXEC) util
 $(DIR_EXEC)/$(EXEC): lib \
                      Main.o \
+                     ReadData.o \
                      |$(DIR_EXEC)
-	g++ -o $@ Main.o $(CXX_FLAGS) $(CXX_LIB)
+	g++ -o $@ Main.o ReadData.o $(CXX_FLAGS) $(CXX_LIB)
 
 debug: CXX_FLAGS = -Wall -ggdb -O0 $(DEFAULT_CXXFLAGS) 
 debug: $(DIR_EXEC_DBG)/$(EXEC) util-dbg
 $(DIR_EXEC_DBG)/$(EXEC): lib-dbg \
                          Main.o \
+                         ReadData.o \
                          | $(DIR_EXEC_DBG)
-	g++ -o $@ Main.o $(CXX_FLAGS) $(CXX_LIB_DBG) 
+	g++ -o $@ Main.o ReadData.o $(CXX_FLAGS) $(CXX_LIB_DBG) 
 
 
 ##################################################
@@ -119,6 +121,10 @@ GitVersion.h: .git/HEAD .git/index
 
 -include Main.d
 Main.o: Main.cpp GitVersion.h
+	g++ -MMD -c $(CXX_FLAGS) $< $(CXX_INCLUDE) -D__ZLIB_AVAILABLE__
+
+-include ReadData.d
+ReadData.o: ReadData.cpp GitVersion.h
 	g++ -MMD -c $(CXX_FLAGS) $< $(CXX_INCLUDE) -D__ZLIB_AVAILABLE__
 
 
@@ -157,45 +163,22 @@ deepclean: clean
 	(cd regression; make clean)
 	(cd libVcf; make clean)
 
-test: test1
-test1: rvtest
-	./rvtest --inVcf test.vcf.gz --outVcf test1.out.vcf 
-test2: rvtest
-	./rvtest --inVcf test.vcf.gz --outVcf test2.out.vcf --peopleIncludeID P4,P2
+test: test1 test2
+
+testPCA.o: testPCA.cpp
+	g++ -c $< $(CXX_FLAGS) $(CXX_INCLUDE)
+test1: testPCA.o ReadData.o
+	g++ -o $@ $^ $(CXX_FLAGS) $(CXX_LIB_DBG)
+
+testProcrustes.o: testProcrustes.cpp
+	g++ -c $< $(CXX_FLAGS) $(CXX_INCLUDE) 
+test2: testProcrustes.o ReadData.o
+	g++ -o $@ $^ $(CXX_FLAGS) $(CXX_LIB_DBG)
+
 test3: rvtest
 	./rvtest --inVcf test.vcf.gz --outVcf test3.vcf --peopleIncludeID P2,NotValid,P3 --peopleExcludeID P3
 test4: rvtest
 	./rvtest --inVcf test.vcf.gz --make-bed test.plink
-
-DajiangDataSet/qt1.vcf.gz: DajiangDataSet/qt1.ped
-	(cd DajiangDataSet; bash cmd.sh);
-
-DajiangDataSet := DajiangDataSet/qt1.vcf.gz DajiangDataSet/qt1.pheno
-
-testSingle: rvtest $(DajiangDataSet)
-	./rvtest --inVcf DajiangDataSet/qt1.vcf.gz --pheno DajiangDataSet/qt1.pheno --single score,wald
-testBurden: rvtest $(DajiangDataSet)
-	./rvtest --inVcf DajiangDataSet/qt1.vcf.gz --pheno DajiangDataSet/qt1.pheno --set DajiangDataSet/set.txt --burden cmc,zeggini,mb,exactCMC
-testVt: rvtest $(DajiangDataSet)
-	./rvtest --inVcf DajiangDataSet/qt1.vcf.gz --pheno DajiangDataSet/qt1.pheno --set DajiangDataSet/set.txt --vt cmc,zeggini,mb,skat
-testKernel: rvtest $(DajiangDataSet)
-	./rvtest --inVcf DajiangDataSet/qt1.vcf.gz --pheno DajiangDataSet/qt1.pheno --set DajiangDataSet/set.txt --kernel skat
-
-# mem test:
-testMemLeak: testMemLeak.cpp $(LIB)
-	g++ -g -O0 -o $@ $<  -I. $(INC)  $(LIB) -lz -lbz2 -lm -lpcre -lpcreposix
-
-# automated tests
-autoTest: autoTest1 autoTest2
-autoTest1: rvtest
-	./rvtest --inVcf test.vcf.gz --outVcf test/try.test.vcf
-	diff test/try.test.vcf test/correct.test.vcf
-
-autoTest2: rvtest
-	./rvtest --inVcf test.vcf.gz --make-bed test/try.test
-	diff test/try.test.bim test/correct.test.bim
-	diff test/try.test.fam test/correct.test.fam
-	diff test/try.test.bed test/correct.test.bed
 
 # archive 
 DATE=$(shell date '+%m%d')
